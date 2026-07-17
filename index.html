@@ -1,5 +1,4 @@
-
-<!-- app standalone v2.1 -->
+<!-- app standalone v2.2 -->
 <!DOCTYPE html>
 <html lang="it">
 <head>
@@ -10,7 +9,7 @@
   // ============================================================
   // CONFIGURAZIONE - MODIFICA QUESTE DUE RIGHE PRIMA DI DISTRIBUIRE
   // ============================================================
-  var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxjouvC1BqS02Uw2kK7jDmHmZPtmFyNvI2acEynFyN2l9ZbDnQPCFNCNQ4776l2Oy40/exec'; // l'URL /exec del deployment Apps Script
+  var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxE8i_LdHLh5XA8nc6nxrq8Ew_ZDSBCvQL8LHf-gUndz5EOSzjbMXp43qMYSXUs7Gby/exec'; // l'URL /exec del deployment Apps Script
   var APP_TOKEN  = 'ap2026';                     // uguale a "Token di accesso" in Configurazione (vuoto = disattivato)
   // ============================================================
 
@@ -57,7 +56,7 @@
     };
   })();
   </script>
-  <!-- app standalone v2.1 -->
+  <!-- app standalone v2.2 -->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -325,7 +324,7 @@
 <div class="app">
   <aside>
     <div class="brand">
-      <div class="brand-mark">Sistema · v2.1</div>
+      <div class="brand-mark">Sistema · v2.2</div>
       <div class="brand-name">Manutenzione</div>
     </div>
     <nav class="side">
@@ -369,7 +368,7 @@
         <div id="tblDaFissare"></div>
       </section>
       <section class="block">
-        <div class="block-head"><h2 class="block-title">In scadenza entro 30 gg <span class="count-chip" id="cntScadenza">0</span></h2></div>
+        <div class="block-head"><h2 class="block-title" id="titInScadenza">In scadenza <span class="count-chip" id="cntScadenza">0</span></h2></div>
         <div id="tblInScadenza"></div>
       </section>
     </div>
@@ -434,7 +433,9 @@
         <div><div class="eyebrow">Analisi</div><h1 class="page-title">Report costi</h1></div>
         <div class="actions">
           <select id="reportAnno" onchange="loadReport()"></select>
+          <select id="reportGruppoExport"><option value="">Tutti i gruppi</option></select>
           <button class="btn subtle" onclick="esportaReportCSV()">Esporta CSV</button>
+          <button class="btn primary" onclick="esportaBRCUI()">📗 Esporta Excel BRC</button>
         </div>
       </div>
       <div class="stats" id="reportStats"></div>
@@ -496,6 +497,10 @@
             <div class="field">
               <label>Token di accesso (per l'HTML condiviso; vuoto = disattivato)</label>
               <input type="text" name="TokenAccesso" placeholder="es. cantina2026">
+            </div>
+            <div class="field">
+              <label>Finestra scadenze in Dashboard (giorni)</label>
+              <input type="number" name="FinestraScadenzeGiorni" min="7" max="365">
             </div>
             <div class="field">
               <button type="submit" class="btn primary">Salva</button>
@@ -647,6 +652,7 @@
         <div class="field" id="regFieldManodopera" style="display:none;"><label>Manodopera esterna (€)</label><input type="number" step="0.01" name="CostoManodopera" min="0"></div>
         <div class="field"><label>Costo ricambi (€)</label><input type="number" step="0.01" name="CostoRicambi" min="0"></div>
         <div class="field" id="regFieldServizi" style="display:none;"><label>Servizi (€)</label><input type="number" step="0.01" name="CostoServizi" min="0"></div>
+        <div class="field"><label>Riferimento (fattura, rapportino, DDT...)</label><input type="text" name="Riferimento" placeholder="es. Fatt. 123, Rapp. R-456"></div>
         <div class="field"><label>Esito</label>
           <select name="Esito"><option value="OK">OK</option><option value="KO">Anomalia / KO</option></select>
         </div>
@@ -677,6 +683,7 @@
         <div class="field"><label>Manodopera (€)</label><input type="number" step="0.01" name="CostoManodopera" min="0"></div>
         <div class="field"><label>Costo ricambi (€)</label><input type="number" step="0.01" name="CostoRicambi" min="0"></div>
         <div class="field"><label>Servizi (€)</label><input type="number" step="0.01" name="CostoServizi" min="0"></div>
+        <div class="field full"><label>Riferimento documento</label><input type="text" name="Riferimento" placeholder="es. Fatt. 123, Rapp. R-456"></div>
       </form>
       <p class="code" style="margin:12px 0 0 0;font-size:11px;color:var(--text-faint);">Se l'intervento è interno, la manodopera viene ricalcolata automaticamente (ore × tariffa attuale) e il campo Manodopera è bloccato. Ogni modifica resta tracciata nel log audit.</p>
     </div>
@@ -707,7 +714,7 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<!-- app standalone v2.1 -->
+<!-- app standalone v2.2 -->
 <script>
   var STATE = { macchine: [], gruppi: [], ditte: [], config: {}, currentScheda: null, currentAnnoReport: new Date().getFullYear() };
   var INFLIGHT = false;
@@ -734,6 +741,14 @@
     google.script.run.withSuccessHandler(function (raw) {
       var data = P(raw);
       STATE.macchine = data.macchine;
+      // carica in background il conteggio piani per macchina (per badge nell'elenco)
+      google.script.run.withSuccessHandler(function (rawPiani) {
+        var piani = P(rawPiani);
+        var conta = {};
+        piani.forEach(function (p) { conta[p.MacchinaID] = (conta[p.MacchinaID] || 0) + 1; });
+        STATE.pianiPerMacchina = conta;
+        renderMacchineTable();
+      }).withFailureHandler(function(){}).getPianificazione();
       STATE.gruppi = data.gruppi;
       STATE.ditte = data.ditte;
       STATE.config = data.config;
@@ -832,6 +847,15 @@
       o.value = g.ID; o.textContent = g.Nome;
       filterGruppoPian.appendChild(o);
     });
+    var selGruppoRep = document.getElementById('reportGruppoExport');
+    if (selGruppoRep) {
+      selGruppoRep.innerHTML = '<option value="">Tutti i gruppi</option>';
+      STATE.gruppi.forEach(function (g) {
+        var o = document.createElement('option');
+        o.value = g.ID; o.textContent = g.Nome;
+        selGruppoRep.appendChild(o);
+      });
+    }
     var dlPian = document.getElementById('dlMacchinePian');
     dlPian.innerHTML = '';
     STATE.macchine.forEach(function (m) {
@@ -880,7 +904,8 @@
       var toSave = [
         ['CostoOrarioInterno', Number(data.CostoOrarioInterno)],
         ['MaxOrdinariPerMacchina', Number(data.MaxOrdinariPerMacchina)],
-        ['TokenAccesso', String(data.TokenAccesso || '').trim()]
+        ['TokenAccesso', String(data.TokenAccesso || '').trim()],
+        ['FinestraScadenzeGiorni', Number(data.FinestraScadenzeGiorni) || 30]
       ];
       var pending = toSave.length;
       toSave.forEach(function (kv) {
@@ -905,6 +930,7 @@
     f.CostoOrarioInterno.value = STATE.config.CostoOrarioInterno || 25;
     f.MaxOrdinariPerMacchina.value = STATE.config.MaxOrdinariPerMacchina || 5;
     f.TokenAccesso.value = STATE.config.TokenAccesso || '';
+    f.FinestraScadenzeGiorni.value = STATE.config.FinestraScadenzeGiorni || 30;
   }
 
   // ---------- Macchine list ----------
@@ -920,12 +946,17 @@
     });
     var el = document.getElementById('tblMacchine');
     if (!rows.length) { el.innerHTML = '<div class="empty">Nessuna macchina.</div>'; return; }
-    var html = '<table class="data"><thead><tr><th>Codice</th><th>Nome</th><th>Gruppo</th><th></th></tr></thead><tbody>';
+    var html = '<table class="data"><thead><tr><th>Codice</th><th>Nome</th><th>Gruppo</th><th>Piani</th><th></th></tr></thead><tbody>';
     rows.forEach(function (m) {
+      var nPiani = (STATE.pianiPerMacchina && STATE.pianiPerMacchina[m.ID]) || 0;
+      var pianiBadge = nPiani > 0
+        ? '<span class="count-chip" style="background:var(--accent-soft);color:var(--accent);">' + nPiani + '</span>'
+        : '<span class="count-chip" style="background:var(--danger-soft);color:var(--danger);" title="nessun intervento pianificato">0</span>';
       html += '<tr class="clickable" onclick="apriSchedaMacchina(\'' + m.ID + '\')">' +
         '<td><span class="code-tag">' + fmtCodice(m.Codice) + '</span></td>' +
         '<td class="machine-name">' + esc(m.Nome) + '</td>' +
         '<td class="code">' + esc(m.NomeGruppo || '(nessun gruppo)') + '</td>' +
+        '<td>' + pianiBadge + '</td>' +
         '<td style="text-align:right;"><span class="code" style="font-size:11px;">apri →</span></td></tr>';
     });
     html += '</tbody></table>';
@@ -1247,6 +1278,7 @@
     f.ModalitaEsecuzione.value = opts.modalita || 'Interna';
     f.DittaID.value = opts.dittaID || '';
     f.Descrizione.value = opts.descrizione || '';
+    if (f.Riferimento) f.Riferimento.value = '';
     document.getElementById('modalRegistraTitle').textContent = opts.titolo;
     var isExt = f.ModalitaEsecuzione.value === 'Esterna';
     document.getElementById('regFieldDitta').style.display = isExt ? 'flex' : 'none';
@@ -1310,6 +1342,7 @@
       costoManodopera: Number(f.CostoManodopera.value) || 0,
       costoRicambi: Number(f.CostoRicambi.value) || 0,
       costoServizi: Number(f.CostoServizi.value) || 0,
+      riferimento: (f.Riferimento && f.Riferimento.value) || '',
       esito: f.Esito.value,
       descrizione: f.Descrizione.value,
       risolveKoID: PENDING_KO || '',
@@ -1588,6 +1621,8 @@
     document.getElementById('cntScaduti').textContent = c.scaduti;
     document.getElementById('cntEsterni').textContent = c.daFissareEsterno;
     document.getElementById('cntScadenza').textContent = c.entro30;
+    var f = c.finestraScadenzeGiorni || 30;
+    document.getElementById('titInScadenza').innerHTML = 'In scadenza entro ' + f + ' gg <span class="count-chip" id="cntScadenza">' + c.entro30 + '</span>';
     renderKOTable(d.koAperti || []);
     renderScadenzeTable('tblScaduti', d.scaduti);
     renderScadenzeTable('tblDaFissare', d.daFissareEsterno);
@@ -1725,7 +1760,7 @@
     if (!regs.length) { el.innerHTML = '<div class="empty">Nessuna registrazione per l\'anno selezionato.</div>'; return; }
     var html = '<table class="data"><thead><tr>' +
       '<th>Data</th><th>Macchina</th><th>Tipo</th><th>Modalità</th><th>Ditta</th>' +
-      '<th style="text-align:right;">Ore</th><th style="text-align:right;">Manodopera</th><th style="text-align:right;">Ricambi</th><th style="text-align:right;">Servizi</th><th style="text-align:right;">Totale</th><th></th>' +
+      '<th>Riferimento</th><th style="text-align:right;">Ore</th><th style="text-align:right;">Manodopera</th><th style="text-align:right;">Ricambi</th><th style="text-align:right;">Servizi</th><th style="text-align:right;">Totale</th><th></th>' +
       '</tr></thead><tbody>';
     regs.forEach(function (r) {
       var tipoBadge = r.TipoIntervento === 'Straordinario' ? '<span class="badge-tipo straord">Straord.</span>' :
@@ -1738,6 +1773,7 @@
         '<td>' + tipoBadge + '</td>' +
         '<td>' + esc(r.ModalitaEsecuzione || '') + '</td>' +
         '<td>' + esc(r.NomeDitta || '—') + '</td>' +
+        '<td class="code">' + esc(r.Riferimento || '') + '</td>' +
         '<td class="num-cell">' + fmtNum(r.OreImpiegate, 1) + '</td>' +
         '<td class="num-cell">' + fmtEuro(r.CostoManodopera) + '</td>' +
         '<td class="num-cell">' + fmtEuro(r.CostoRicambi) + '</td>' +
@@ -1760,6 +1796,7 @@
     f.CostoManodopera.disabled = (r.ModalitaEsecuzione === 'Interna');
     f.CostoRicambi.value = r.CostoRicambi || 0;
     f.CostoServizi.value = r.CostoServizi || 0;
+    f.Riferimento.value = r.Riferimento || '';
     document.getElementById('costiInfo').textContent =
       fmtDate(r.DataEsecuzione) + ' · ' + r.NomeMacchina + ' · ' + r.ModalitaEsecuzione + (r.NomeDitta ? ' (' + r.NomeDitta + ')' : '');
     apriModal('modalCosti');
@@ -1799,6 +1836,22 @@
     a.href = URL.createObjectURL(blob);
     a.download = 'report-manutenzione-' + r.anno + '.csv';
     a.click();
+  }
+
+  function esportaBRCUI() {
+    if (INFLIGHT) return;
+    var anno = Number(document.getElementById('reportAnno').value) || new Date().getFullYear();
+    var gruppo = document.getElementById('reportGruppoExport').value || '';
+    showToast('Generazione file Excel in corso... può richiedere fino a un minuto.');
+    INFLIGHT = true;
+    google.script.run.withSuccessHandler(function (raw) {
+      INFLIGHT = false;
+      var res = P(raw);
+      if (!res || !res.downloadUrl) { showToast('Errore export.', true); return; }
+      showToast('File generato: ' + res.nome);
+      // apri il download in una nuova scheda
+      window.open(res.downloadUrl, '_blank');
+    }).withFailureHandler(onError).esportaBRC(anno, gruppo);
   }
 </script>
 
